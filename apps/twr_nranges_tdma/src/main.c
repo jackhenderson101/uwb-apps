@@ -59,6 +59,8 @@
 
 #endif
 
+#define GPIO_RPI (26)
+
 static bool uwb_config_updated = false;
 int
 uwb_config_updated_cb()
@@ -82,6 +84,46 @@ struct uwbcfg_cbs uwb_cb = {
     .uc_update = uwb_config_updated_cb
 };
 
+struct hal_timer led_timer;
+uint32_t timer_delay = 0;
+uint16_t my_codeword = 0;
+uint16_t current_codeword_bit = 0;
+uint16_t codewords[] = {
+    0b010111111011111,
+    0b011110111101111,
+    0b010111011101111,
+    0b010110110111111,
+    0b010111110110101,
+    0b011011011011011,
+    0b010110111010101,
+    0b010110101101011,
+    0b001111111111011,
+    0b001010111111111,
+    0b001101111101111,
+    0b001111111011101,
+    0b001111110110111,
+    0b001011111110101
+};
+
+static void led_control(void *args) {
+    // LED uses negative logic. 0 means LED is on.
+    int led_state = ~(my_codeword >> current_codeword_bit) & 1;
+    hal_gpio_write(GPIO_RPI, led_state);
+    hal_gpio_write(LED_4, led_state);
+    if(current_codeword_bit == 0){
+        current_codeword_bit = 14;
+    } else {
+        current_codeword_bit--;
+    }
+
+
+
+    // Reschedule the timer
+    // 60 Hz in microseconds
+    timer_delay += 16667;
+    os_cputime_timer_start(&led_timer, timer_delay);
+
+}
 
 static void nrng_complete_cb(struct dpl_event *ev) {
     assert(ev != NULL);
@@ -90,6 +132,7 @@ static void nrng_complete_cb(struct dpl_event *ev) {
     hal_gpio_toggle(LED_BLINK_PIN);
     struct nrng_instance * nrng = (struct nrng_instance *) dpl_event_get_arg(ev);
     nrng_frame_t * frame = nrng->frames[(nrng->idx)%nrng->nframes];
+    printf("nrng complete\n");
 
 #ifdef VERBOSE
     if (inst->status.start_rx_error)
@@ -128,7 +171,7 @@ static bool complete_cb(struct uwb_dev * inst, struct uwb_mac_interface * cbs)
  *
  * returns none
  */
-
+// static bool slot_mask_high = false;
 
 static void
 slot_cb(struct dpl_event * ev){
@@ -166,7 +209,34 @@ slot_cb(struct dpl_event * ev){
         }
     }
 
-    if (udev->role&UWB_ROLE_ANCHOR) {
+    uint16_t active_slot_id = udev->role >> 4;
+    // printf("Slot: %d. Idx %d\n", idx, active_slot_id);
+
+    if (udev->role&UWB_ROLE_ACTIVE_NODE && idx % MYNEWT_VAL(NUM_ACTIVE_NODES) == active_slot_id){
+
+        /* Range with the anchors */
+        uint64_t dx_time = tdma_tx_slot_start(tdma, idx) & 0xFFFFFFFFFE00UL;
+        uint32_t slot_mask = 0;
+        for (uint16_t i = MYNEWT_VAL(NODE_START_SLOT_ID);
+             i <= MYNEWT_VAL(NODE_END_SLOT_ID); i++) {
+            slot_mask |= 1UL << i;
+        }
+        // if(slot_mask_high){
+        //     slot_mask = 0xFF00; // Range 8-15
+        // } else {
+        slot_mask = 0x13F; // Range 0-7
+        // }
+        // slot_mask_high = !slot_mask_high;
+        // printf("Slot mask %lx\n", slot_mask);
+
+        if(nrng_request_delay_start(
+               nrng, UWB_BROADCAST_ADDRESS, dx_time,
+               UWB_DATA_CODE_SS_TWR_NRNG, slot_mask, 0).start_tx_error) {
+            uint32_t utime = os_cputime_ticks_to_usecs(os_cputime_get32());
+            printf("{\"utime\": %lu,\"msg\": \"slot_timer_cb_%d:start_tx_error\"}\n",
+                   utime,idx);
+        }
+    } else if (udev->role&UWB_ROLE_ANCHOR) {
         /* Listen for a ranging tag */
         uwb_set_delay_start(udev, tdma_rx_slot_start(tdma, idx));
         uint16_t timeout = uwb_phy_frame_duration(udev, sizeof(nrng_request_frame_t))
@@ -180,6 +250,8 @@ slot_cb(struct dpl_event * ev){
         if (idx%MYNEWT_VAL(NRNG_NTAGS) != udev->slot_id) {
             return;
         }
+
+        printf("Ranging here \n");
 
         /* Range with the anchors */
         uint64_t dx_time = tdma_tx_slot_start(tdma, idx) & 0xFFFFFFFFFE00UL;
@@ -242,7 +314,8 @@ int main(int argc, char **argv){
 
     hal_gpio_init_out(LED_BLINK_PIN, 1);
     hal_gpio_init_out(LED_1, 1);
-    hal_gpio_init_out(LED_3, 1);
+    hal_gpio_init_out(LED_4, 1);
+    hal_gpio_init_out(GPIO_RPI, 1);
 
     struct uwb_dev * udev = uwb_dev_idx_lookup(0);
     udev->config.rxauto_enable = false;
@@ -302,7 +375,18 @@ int main(int argc, char **argv){
         uwb_pan_start(pan, UWB_PAN_ROLE_RELAY, role);
     }
 
+
     uint32_t utime = os_cputime_ticks_to_usecs(os_cputime_get32());
+
+    ///// LED CONTROL ////
+    my_codeword = codewords[udev->role >> 4];
+    printf("{\"uwb_role\": \"0x%X\"}\n", udev->role);
+    printf("{\"led_codeword\": \"0x%X\"}\n", my_codeword);
+    printf("{\"uwb_id\": \"%lld\"}\n", udev->euid & 0xFFFF);
+    printf("NFRAMES: %d\n", MYNEWT_VAL(NRNG_NFRAMES));
+    os_cputime_timer_init(&led_timer, led_control, NULL);
+    os_cputime_timer_start(&led_timer, utime);
+
     printf("{\"utime\": %lu,\"exec\": \"%s\"}\n",utime,__FILE__);
     printf("{\"device_id\":\"%lX\"",udev->device_id);
     printf(",\"panid\":\"%X\"",udev->pan_id);
@@ -316,20 +400,25 @@ int main(int argc, char **argv){
     /* Pan is slots 1&2 */
     tdma_instance_t * tdma = (tdma_instance_t*)uwb_mac_find_cb_inst_ptr(udev, UWBEXT_TDMA);
     assert(tdma);
+    printf("{\"utime\": %lu,\"msg\": \"slot %d assigned pan\"}\n",utime, 1);
     tdma_assign_slot(tdma, uwb_pan_slot_timer_cb, 1, (void*)pan);
+    printf("{\"utime\": %lu,\"msg\": \"slot %d assigned pan\"}\n",utime, 2);
     tdma_assign_slot(tdma, uwb_pan_slot_timer_cb, 2, (void*)pan);
 
 #if MYNEWT_VAL(SURVEY_ENABLED)
     survey_instance_t *survey = (survey_instance_t*)uwb_mac_find_cb_inst_ptr(udev, UWBEXT_SURVEY);
 
+    printf("{\"utime\": %lu,\"msg\": \"slot %d assigned survey_range\"}\n",utime, MYNEWT_VAL(SURVEY_RANGE_SLOT));
     tdma_assign_slot(tdma, survey_slot_range_cb, MYNEWT_VAL(SURVEY_RANGE_SLOT), (void*)survey);
+    printf("{\"utime\": %lu,\"msg\": \"slot %d assigned survey_broadcast\"}\n",utime, MYNEWT_VAL(SURVEY_BROADCAST_SLOT));
     tdma_assign_slot(tdma, survey_slot_broadcast_cb, MYNEWT_VAL(SURVEY_BROADCAST_SLOT), (void*)survey);
-    for (uint16_t i = 6; i < MYNEWT_VAL(TDMA_NSLOTS); i++)
+    for (uint16_t i = 6; i < MYNEWT_VAL(TDMA_NSLOTS); i++){
 #else
-    for (uint16_t i = 3; i < MYNEWT_VAL(TDMA_NSLOTS); i++)
+    for (uint16_t i = 3; i < MYNEWT_VAL(TDMA_NSLOTS); i++){
 #endif
+        // printf("{\"utime\": %lu,\"msg\": \"slot %d assigned nrng\"}\n",utime, i);
         tdma_assign_slot(tdma, slot_cb, i, (void*)nrng);
-
+    }
     while (1) {
         os_eventq_run(os_eventq_dflt_get());
     }

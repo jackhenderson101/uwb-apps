@@ -3,7 +3,7 @@ syscfg.vals:
     CONSOLE_UART: 0
     CONSOLE_RTT: 1
     CONSOLE_BLE_MONITOR: 0
-    CONSOLE_UART_BAUD: 460800
+    CONSOLE_UART_BAUD: 115200
     CONSOLE_UART_TX_BUF_SIZE: 1024
     CONSOLE_HISTORY_SIZE: 8
 
@@ -33,6 +33,14 @@ syscfg.vals:
 
     NRNG_VERBOSE: 1
     NRNG_DEVICE_TYPE: 1
+    NRNG_NFRAMES: 16
+    NRNG_NNODES: 8
+    
+    NUM_ACTIVE_NODES: 6
+
+    DW1000_SYS_STATUS_BACKTRACE_LEN: 128
+
+
 
     # Pan related parameters, lease in s, lease exp margin in ms
     UWB_PAN_ENABLED: 1
@@ -52,8 +60,8 @@ syscfg.vals:
     SURVEY_RANGE_SLOT: 3
     SURVEY_BROADCAST_SLOT: 4
 
-    # By default we're a tag
-    UWBCFG_DEF_ROLE: '"0x0"'
+    # By default we're a active anchor
+    UWBCFG_DEF_ROLE: '"0xC"'
     UWBCFG_APPLY_AT_INIT: 1
 
     # Disable central and observer roles.
@@ -64,6 +72,8 @@ syscfg.vals:
     BLE_ROLE_CENTRAL: 0
     BLE_ROLE_OBSERVER: 0
     BLE_ROLE_PERIPHERAL: 1
+
+
 
 syscfg.defs:
     PANMASTER_ISSUER:
@@ -94,6 +104,9 @@ syscfg.defs:
     APP_USE_WCS:
         description: 'Whether to use WCS or not, setting this to 0 removes the WCS pkg'
         value: 1
+    NUM_ACTIVE_NODES:
+        description: "Number of active nodes in the network"
+        value: 6
 
 syscfg.vals.PANMASTER_ISSUER:
     UWBCFG_DEF_ROLE: '"0x7"'
