@@ -132,7 +132,7 @@ static void nrng_complete_cb(struct dpl_event *ev) {
     hal_gpio_toggle(LED_BLINK_PIN);
     struct nrng_instance * nrng = (struct nrng_instance *) dpl_event_get_arg(ev);
     nrng_frame_t * frame = nrng->frames[(nrng->idx)%nrng->nframes];
-    printf("nrng complete\n");
+    // printf("nrng complete\n");
 
 #ifdef VERBOSE
     if (inst->status.start_rx_error)
@@ -213,7 +213,7 @@ slot_cb(struct dpl_event * ev){
     // printf("Slot: %d. Idx %d\n", idx, active_slot_id);
 
     if (udev->role&UWB_ROLE_ACTIVE_NODE && idx % MYNEWT_VAL(NUM_ACTIVE_NODES) == active_slot_id){
-
+        // printf("SLOT %d\n", idx);   
         /* Range with the anchors */
         uint64_t dx_time = tdma_tx_slot_start(tdma, idx) & 0xFFFFFFFFFE00UL;
         uint32_t slot_mask = 0;
@@ -224,7 +224,7 @@ slot_cb(struct dpl_event * ev){
         // if(slot_mask_high){
         //     slot_mask = 0xFF00; // Range 8-15
         // } else {
-        slot_mask = 0x13F; // Range 0-7
+        slot_mask = 0xFFFF; // Range 0-7
         // }
         // slot_mask_high = !slot_mask_high;
         // printf("Slot mask %lx\n", slot_mask);
@@ -384,6 +384,7 @@ int main(int argc, char **argv){
     printf("{\"led_codeword\": \"0x%X\"}\n", my_codeword);
     printf("{\"uwb_id\": \"%lld\"}\n", udev->euid & 0xFFFF);
     printf("NFRAMES: %d\n", MYNEWT_VAL(NRNG_NFRAMES));
+    printf("NRNG_NNODES: %d\n", MYNEWT_VAL(NRNG_NNODES));
     os_cputime_timer_init(&led_timer, led_control, NULL);
     os_cputime_timer_start(&led_timer, utime);
 
